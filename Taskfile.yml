@@ -1,0 +1,34 @@
+version: '2'
+output: 'prefixed'
+
+tasks:
+  default:
+    cmds:
+      - task: test
+      - task: lint
+
+  setup:
+    dir: /tmp
+    cmds:
+      - go get github.com/vektra/mockery/.../
+      - GO111MODULE=on go get github.com/cortesi/modd/cmd/modd
+      - go get github.com/kyoh86/richgo
+      - GO111MODULE=on go get github.com/golangci/golangci-lint/cmd/golangci-lint@v1.26.0
+
+  gen-mocks:
+    cmds:
+      - find . -type f -name 'mock_*.go' -delete
+      - mockery -all -testonly -inpkg
+      - find cmd -type f -name 'mock_*.go' -delete
+
+  test:
+    env:
+      RICHGO_FORCE_COLOR: 1
+    cmds:
+      - mkdir -p build
+      - richgo test ./... -timeout 5s -cover -coverprofile build/cover.out
+      - go tool cover -html=build/cover.out -o build/cover.html
+
+  lint:
+    cmds:
+      - golangci-lint run --color always
