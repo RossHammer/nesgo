@@ -40,25 +40,25 @@ func (a AddressingMode) Length() uint16 {
 	}
 }
 
-func (a AddressingMode) getAddress(cpu *CPU, pc uint16) uint16 {
+func (a AddressingMode) getAddress(cpu *CPU, p1, p2 func() uint8) uint16 {
 	switch a {
 	case Absolute:
-		return combineBytes(cpu.readAddress(pc+1), cpu.readAddress(pc+2))
+		return combineBytes(p1(), p2())
 	case ZeroPage:
-		return uint16(cpu.readAddress(pc + 1))
+		return uint16(p1())
 	case Relative:
-		return 1 + a.Length() + pc + uint16(cpu.readAddress(pc+1))
+		return cpu.PC + uint16(p1())
 	default:
 		panic(fmt.Sprintf("Unknown addressing mode %d", a))
 	}
 }
 
-func (a AddressingMode) getValue(cpu *CPU, pc uint16) uint8 {
+func (a AddressingMode) getValue(cpu *CPU, p1, p2 func() uint8, debug bool) uint8 {
 	switch a {
 	case Immediate:
-		return cpu.readAddress(pc + 1)
+		return p1()
 	case ZeroPage:
-		return cpu.readAddress(a.getAddress(cpu, pc))
+		return cpu.readAddress(a.getAddress(cpu, p1, p2), debug)
 	default:
 		panic(fmt.Sprintf("Unknown addressing mode %d", a))
 	}
@@ -69,15 +69,15 @@ func (a AddressingMode) formattedAddr(cpu *CPU) string {
 	case UnknownMode:
 		return "???"
 	case Absolute:
-		return fmt.Sprintf("$%04X", combineBytes(cpu.readAddress(cpu.PC+1), cpu.readAddress(cpu.PC+2)))
+		return fmt.Sprintf("$%04X", combineBytes(cpu.readAddress(cpu.PC+1, true), cpu.readAddress(cpu.PC+2, true)))
 	case Immediate:
-		return fmt.Sprintf("#$%02X", cpu.readAddress(cpu.PC+1))
+		return fmt.Sprintf("#$%02X", cpu.readAddress(cpu.PC+1, true))
 	case ZeroPage:
-		return fmt.Sprintf("$%02X", cpu.readAddress(cpu.PC+1))
+		return fmt.Sprintf("$%02X", cpu.readAddress(cpu.PC+1, true))
 	case Implied:
 		return ""
 	case Relative:
-		return fmt.Sprintf("$%04X", 1+a.Length()+cpu.PC+uint16(cpu.readAddress(cpu.PC+1)))
+		return fmt.Sprintf("$%04X", 1+a.Length()+cpu.PC+uint16(cpu.readAddress(cpu.PC+1, true)))
 	default:
 		panic(fmt.Sprintf("Unknown addressing mode %d", a))
 	}
@@ -273,7 +273,7 @@ var (
 		{code: 0x86, action: StoreX, addrMode: ZeroPage},
 		{code: 0x88, action: DecrementY, addrMode: Implied},
 		{code: 0x8A, action: TransferXToAccumulator, addrMode: Implied},
-		// {code: 0x8E, action: StoreX, addrMode: Absolute},
+		{code: 0x8E, action: StoreX, addrMode: Absolute},
 		{code: 0x90, action: BranchIfCarryClear, addrMode: Relative},
 		{code: 0x98, action: TransferYToAccumulator, addrMode: Implied},
 		{code: 0xA0, action: LoadY, addrMode: Immediate},
@@ -316,7 +316,14 @@ func (i *instruction) Disassembly(cpu *CPU) string {
 	dis := fmt.Sprintf("%s %s", i.action.symbol(), i.addrMode.formattedAddr(cpu))
 
 	if i.action.printSource() {
-		s := cpu.readAddress(i.addrMode.getAddress(cpu, cpu.PC))
+		b := i.bytes(cpu)
+		p1 := func() uint8 {
+			return b[1]
+		}
+		p2 := func() uint8 {
+			return b[2]
+		}
+		s := cpu.readAddress(i.addrMode.getAddress(cpu, p1, p2), true)
 		dis = fmt.Sprintf("%s = %02X", dis, s)
 	}
 
@@ -328,236 +335,10 @@ func (i *instruction) bytes(cpu *CPU) []uint8 {
 	r := make([]uint8, length)
 
 	for i := uint16(0); i < length; i++ {
-		r[i] = cpu.readAddress(cpu.PC + i)
+		r[i] = cpu.readAddress(cpu.PC+i, true)
 	}
 
 	return r
-}
-
-func (i *instruction) execute(cpu *CPU) uint {
-	pc := cpu.PC
-	cpu.PC += 1 + i.addrMode.Length()
-
-	var cycles uint
-
-	switch a := i.action; a {
-	case Jump:
-		addr := i.addrMode.getAddress(cpu, pc)
-		cpu.PC = addr
-		cycles += 3
-	case LoadX:
-		value := i.addrMode.getValue(cpu, pc)
-		setFlagsFromLoad(cpu, value)
-		cpu.X = value
-		cycles += 2
-	case StoreX:
-		cpu.writeAddress(i.addrMode.getAddress(cpu, pc), cpu.X)
-		cycles += 3
-	case JumpSubroutine:
-		addr := i.addrMode.getAddress(cpu, pc)
-		upper, lower := decomposeBytes(cpu.PC)
-		cpu.pushStack(lower)
-		cpu.pushStack(upper)
-		cpu.PC = addr
-		cycles += 6
-	case NoOperation:
-		cycles += 2
-	case SetCarry:
-		cpu.C = true
-		cycles += 2
-	case BranchIfCarrySet:
-		cycles += i.comparison(cpu, cpu.C, pc)
-	case ClearCarry:
-		cpu.C = false
-		cycles += 2
-	case BranchIfCarryClear:
-		cycles += i.comparison(cpu, !cpu.C, pc)
-	case LoadAccumulator:
-		value := i.addrMode.getValue(cpu, pc)
-		setFlagsFromLoad(cpu, value)
-		cpu.A = value
-		cycles += 2
-	case BranchIfEqual:
-		cycles += i.comparison(cpu, cpu.Z, pc)
-	case BranchIfNotEqual:
-		cycles += i.comparison(cpu, !cpu.Z, pc)
-	case StoreAccumulator:
-		cpu.writeAddress(i.addrMode.getAddress(cpu, pc), cpu.A)
-		cycles += 3
-	case BitTest:
-		v := i.addrMode.getValue(cpu, pc)
-		cpu.Z = cpu.A&v == 0
-		cpu.V = ((v >> 6) & 0x1) == 1
-		cpu.N = ((v >> 7) & 0x1) == 1
-		cycles += 3
-	case BranchIfOverflowSet:
-		cycles += i.comparison(cpu, cpu.V, pc)
-	case BranchIfOverflowClear:
-		cycles += i.comparison(cpu, !cpu.V, pc)
-	case BranchIfPositive:
-		cycles += i.comparison(cpu, !cpu.N, pc)
-	case ReturnSubroutine:
-		addr := combineBytes(cpu.popStack(), cpu.popStack())
-		cpu.PC = addr
-		cycles += 6
-	case SetInteruptDisable:
-		cycles += 2
-		cpu.I = true
-	case SetDecimal:
-		cycles += 2
-		cpu.D = true
-	case PushProcessorStatus:
-		cycles += 3
-		cpu.pushStack(cpu.GetStatus(true))
-	case PullAccumulator:
-		cycles += 4
-		v := cpu.popStack()
-		setFlagsFromLoad(cpu, v)
-		cpu.A = v
-	case LogicalAnd:
-		v := cpu.A & i.addrMode.getValue(cpu, pc)
-		setFlagsFromLoad(cpu, v)
-		cpu.A = v
-		cycles += 2
-	case Compare:
-		v := i.addrMode.getValue(cpu, pc)
-		cpu.C = cpu.A >= v
-		setFlagsFromLoad(cpu, cpu.A-v)
-		cycles += 2
-	case ClearDecimal:
-		cycles += 2
-		cpu.D = false
-	case PushAccumulator:
-		cpu.pushStack(cpu.A)
-		cycles += 3
-	case PullProcessorStatus:
-		cpu.SetStatus(cpu.popStack())
-		cycles += 4
-	case BranchIfMinus:
-		cycles += i.comparison(cpu, cpu.N, pc)
-	case LogicalInclusiveOr:
-		v := cpu.A | i.addrMode.getValue(cpu, pc)
-		setFlagsFromLoad(cpu, v)
-		cpu.A = v
-		cycles += 2
-	case ClearOverflow:
-		cpu.V = false
-		cycles += 2
-	case ExclusiveOr:
-		v := cpu.A ^ i.addrMode.getValue(cpu, pc)
-		setFlagsFromLoad(cpu, v)
-		cpu.A = v
-		cycles += 2
-	case AddWithCarry:
-		v := i.addrMode.getValue(cpu, pc)
-		a := cpu.A
-		c := uint16(0)
-		if cpu.C {
-			c = 1
-		}
-		sum := uint16(a) + uint16(v) + c
-		setFlagsFromLoad(cpu, uint8(sum))
-		cpu.C = sum > 0xFF
-		cpu.V = ^(a^v)&(a^uint8(sum))&0x80 != 0
-		cpu.A = uint8(sum)
-		cycles += 2
-	case LoadY:
-		value := i.addrMode.getValue(cpu, pc)
-		setFlagsFromLoad(cpu, value)
-		cpu.Y = value
-		cycles += 2
-	case CompareY:
-		v := i.addrMode.getValue(cpu, pc)
-		cpu.C = cpu.Y >= v
-		setFlagsFromLoad(cpu, cpu.Y-v)
-		cycles += 2
-	case CompareX:
-		v := i.addrMode.getValue(cpu, pc)
-		cpu.C = cpu.X >= v
-		setFlagsFromLoad(cpu, cpu.X-v)
-		cycles += 2
-	case SubtractWithCarry:
-		v := ^i.addrMode.getValue(cpu, pc)
-		a := cpu.A
-		c := uint16(0)
-		if cpu.C {
-			c = 1
-		}
-		sum := uint16(a) + uint16(v) + c
-		setFlagsFromLoad(cpu, uint8(sum))
-		cpu.C = sum > 0xFF
-		cpu.V = ^(a^v)&(a^uint8(sum))&0x80 != 0
-		cpu.A = uint8(sum)
-		cycles += 2
-	case IncrementY:
-		v := cpu.Y
-		v++
-		setFlagsFromLoad(cpu, v)
-		cpu.Y = v
-		cycles += 2
-	case IncrementX:
-		v := cpu.X
-		v++
-		setFlagsFromLoad(cpu, v)
-		cpu.X = v
-		cycles += 2
-	case DecrementY:
-		v := cpu.Y
-		v--
-		setFlagsFromLoad(cpu, v)
-		cpu.Y = v
-		cycles += 2
-	case DecrementX:
-		v := cpu.X
-		v--
-		setFlagsFromLoad(cpu, v)
-		cpu.X = v
-		cycles += 2
-	case TransferAccumulatorToY:
-		v := cpu.A
-		setFlagsFromLoad(cpu, v)
-		cpu.Y = v
-		cycles += 2
-	case TransferAccumulatorToX:
-		v := cpu.A
-		setFlagsFromLoad(cpu, v)
-		cpu.X = v
-		cycles += 2
-	case TransferYToAccumulator:
-		v := cpu.Y
-		setFlagsFromLoad(cpu, v)
-		cpu.A = v
-		cycles += 2
-	case TransferXToAccumulator:
-		v := cpu.X
-		setFlagsFromLoad(cpu, v)
-		cpu.A = v
-		cycles += 2
-	case TransferStackToX:
-		v := cpu.SP
-		setFlagsFromLoad(cpu, v)
-		cpu.X = v
-		cycles += 2
-	default:
-		panic(fmt.Sprintf("Unknown action %d", a))
-	}
-
-	return cycles
-}
-
-func (i *instruction) comparison(cpu *CPU, flag bool, pc uint16) uint {
-	cycles := uint(2)
-	if flag {
-		cpu.PC = i.addrMode.getAddress(cpu, pc)
-		cycles++
-	}
-
-	return cycles
-}
-
-func setFlagsFromLoad(cpu *CPU, v uint8) {
-	cpu.Z = v == 0
-	cpu.N = v>>7 != 0
 }
 
 func combineBytes(a, b uint8) uint16 {
