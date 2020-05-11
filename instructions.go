@@ -100,6 +100,15 @@ func (a AddressingMode) formattedAddr(cpu *CPU, p1, p2 func() uint8, read func(u
 	}
 }
 
+func (i AddressingMode) printSource() bool {
+	switch i {
+	case ZeroPage, Absolute, IndirectX:
+		return true
+	default:
+		return false
+	}
+}
+
 type Action uint8
 
 const (
@@ -268,15 +277,6 @@ func (a Action) symbol() string {
 	}
 }
 
-func (a Action) printSource() bool {
-	switch a {
-	case BitTest, StoreX, StoreAccumulator, LoadX, LoadAccumulator, LogicalInclusiveOr:
-		return true
-	}
-
-	return false
-}
-
 var (
 	unknownInstruction = &instruction{}
 	instructions       map[uint8]*instruction
@@ -288,6 +288,7 @@ var (
 		{code: 0x10, action: BranchIfPositive, addrMode: Relative},
 		{code: 0x18, action: ClearCarry, addrMode: Implied},
 		{code: 0x20, action: JumpSubroutine, addrMode: Absolute},
+		{code: 0x21, action: LogicalAnd, addrMode: IndirectX},
 		{code: 0x24, action: BitTest, addrMode: ZeroPage},
 		{code: 0x28, action: PullProcessorStatus, addrMode: Implied},
 		{code: 0x29, action: LogicalAnd, addrMode: Immediate},
@@ -366,7 +367,7 @@ func (i *instruction) Disassembly(cpu *CPU) string {
 	}
 	dis := fmt.Sprintf("%s %s", i.action.symbol(), i.addrMode.formattedAddr(cpu, p1, p2, cpu.debugReadAddress, func() {}))
 
-	if i.action.printSource() && i.addrMode != Immediate {
+	if i.addrMode.printSource() && i.action != Jump && i.action != JumpSubroutine {
 		s := cpu.debugReadAddress(i.addrMode.getAddress(cpu, p1, p2, cpu.debugReadAddress, func() {}))
 		dis = fmt.Sprintf("%s = %02X", dis, s)
 	}
