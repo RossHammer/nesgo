@@ -164,6 +164,7 @@ const (
 	ArithmeticShitLeft
 	RotateRight
 	RotateLeft
+	StoreY
 )
 
 func (a Action) symbol() string {
@@ -272,6 +273,8 @@ func (a Action) symbol() string {
 		return "ROR"
 	case RotateLeft:
 		return "ROL"
+	case StoreY:
+		return "STY"
 	default:
 		panic(fmt.Sprintf("Unknown action %d", a))
 	}
@@ -282,6 +285,7 @@ var (
 	instructions       map[uint8]*instruction
 	instructionList    = []*instruction{
 		{code: 0x01, action: LogicalInclusiveOr, addrMode: IndirectX},
+		{code: 0x05, action: LogicalInclusiveOr, addrMode: ZeroPage},
 		{code: 0x08, action: PushProcessorStatus, addrMode: Implied},
 		{code: 0x09, action: LogicalInclusiveOr, addrMode: Immediate},
 		{code: 0x0A, action: ArithmeticShitLeft, addrMode: Accumulator},
@@ -290,11 +294,15 @@ var (
 		{code: 0x20, action: JumpSubroutine, addrMode: Absolute},
 		{code: 0x21, action: LogicalAnd, addrMode: IndirectX},
 		{code: 0x24, action: BitTest, addrMode: ZeroPage},
+		{code: 0x25, action: LogicalAnd, addrMode: ZeroPage},
 		{code: 0x28, action: PullProcessorStatus, addrMode: Implied},
 		{code: 0x29, action: LogicalAnd, addrMode: Immediate},
 		{code: 0x2A, action: RotateLeft, addrMode: Accumulator},
 		{code: 0x30, action: BranchIfMinus, addrMode: Relative},
 		{code: 0x40, action: ReturnFromInterrupt, addrMode: Implied},
+		{code: 0x41, action: ExclusiveOr, addrMode: IndirectX},
+		{code: 0x45, action: ExclusiveOr, addrMode: ZeroPage},
+		{code: 0x46, action: LogicalShiftRight, addrMode: ZeroPage},
 		{code: 0x48, action: PushAccumulator, addrMode: Implied},
 		{code: 0x49, action: ExclusiveOr, addrMode: Immediate},
 		{code: 0x4A, action: LogicalShiftRight, addrMode: Accumulator},
@@ -302,12 +310,15 @@ var (
 		{code: 0x38, action: SetCarry, addrMode: Implied},
 		{code: 0x50, action: BranchIfOverflowClear, addrMode: Relative},
 		{code: 0x60, action: ReturnSubroutine, addrMode: Implied},
+		{code: 0x61, action: AddWithCarry, addrMode: IndirectX},
+		{code: 0x65, action: AddWithCarry, addrMode: ZeroPage},
 		{code: 0x68, action: PullAccumulator, addrMode: Implied},
 		{code: 0x69, action: AddWithCarry, addrMode: Immediate},
 		{code: 0x6A, action: RotateRight, addrMode: Accumulator},
 		{code: 0x70, action: BranchIfOverflowSet, addrMode: Relative},
 		{code: 0x78, action: SetInteruptDisable, addrMode: Implied},
 		{code: 0x81, action: StoreAccumulator, addrMode: IndirectX},
+		{code: 0x84, action: StoreY, addrMode: ZeroPage},
 		{code: 0x85, action: StoreAccumulator, addrMode: ZeroPage},
 		{code: 0x86, action: StoreX, addrMode: ZeroPage},
 		{code: 0x88, action: DecrementY, addrMode: Implied},
@@ -320,7 +331,9 @@ var (
 		{code: 0xA0, action: LoadY, addrMode: Immediate},
 		{code: 0xA1, action: LoadAccumulator, addrMode: IndirectX},
 		{code: 0xA2, action: LoadX, addrMode: Immediate},
+		{code: 0xA4, action: LoadY, addrMode: ZeroPage},
 		{code: 0xA5, action: LoadAccumulator, addrMode: ZeroPage},
+		{code: 0xA6, action: LoadX, addrMode: ZeroPage},
 		{code: 0xA8, action: TransferAccumulatorToY, addrMode: Implied},
 		{code: 0xA9, action: LoadAccumulator, addrMode: Immediate},
 		{code: 0xAA, action: TransferAccumulatorToX, addrMode: Implied},
@@ -330,12 +343,18 @@ var (
 		{code: 0xB8, action: ClearOverflow, addrMode: Implied},
 		{code: 0xBA, action: TransferXToStackPointer, addrMode: Implied},
 		{code: 0xC0, action: CompareY, addrMode: Immediate},
+		{code: 0xC1, action: Compare, addrMode: IndirectX},
+		{code: 0xC4, action: CompareY, addrMode: ZeroPage},
+		{code: 0xC5, action: Compare, addrMode: ZeroPage},
 		{code: 0xC8, action: IncrementY, addrMode: Implied},
 		{code: 0xC9, action: Compare, addrMode: Immediate},
 		{code: 0xCA, action: DecrementX, addrMode: Implied},
 		{code: 0xD0, action: BranchIfNotEqual, addrMode: Relative},
 		{code: 0xD8, action: ClearDecimal, addrMode: Implied},
 		{code: 0xE0, action: CompareX, addrMode: Immediate},
+		{code: 0xE1, action: SubtractWithCarry, addrMode: IndirectX},
+		{code: 0xE4, action: CompareX, addrMode: ZeroPage},
+		{code: 0xE5, action: SubtractWithCarry, addrMode: ZeroPage},
 		{code: 0xE8, action: IncrementX, addrMode: Implied},
 		{code: 0xE9, action: SubtractWithCarry, addrMode: Immediate},
 		{code: 0xEA, action: NoOperation, addrMode: Implied},

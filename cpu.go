@@ -187,6 +187,8 @@ func (c *CPU) ExecuteOnce() {
 		}
 		c.A = c.setFlagsFromLoad(v<<1 | cr)
 		c.C = v>>7 == 1
+	case StoreY:
+		c.writeAddress(addr(), c.Y)
 	default:
 		panic(fmt.Sprintf("Unknown action %d", a))
 	}
