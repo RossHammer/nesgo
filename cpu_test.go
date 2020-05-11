@@ -32,13 +32,15 @@ func TestCPUWithROM(t *testing.T) {
 
 	cpu := New(rom)
 
+	var prev string
 	for i, l := range strings.Split(string(output), "\n") {
 		state := printState(cpu)
 		if !assert.Equalf(t, l, state, "Processor failed on line %d of log", i+1) {
-			t.FailNow()
+			assert.FailNow(t, prev)
 		}
 
 		cpu.ExecuteOnce()
+		prev = l
 	}
 }
 

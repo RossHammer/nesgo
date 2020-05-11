@@ -1,16 +1,19 @@
 package nesgo
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type CPU struct {
-	Cycles uint
 	Mapper Mapper
 	RAM    []uint8
 
 	PC          uint16
 	A, X, Y, SP uint8
-	ScanLine    uint
-	newCycles   uint
+
+	Cycles    int
+	ScanLine  int
+	newCycles int
 
 	C, Z, I, D, B, V, N bool
 }
@@ -40,12 +43,15 @@ func (c *CPU) ExecuteOnce() {
 	}
 	p2Func := c.readPC
 
+	tick := func() {
+		c.newCycles++
+	}
 	addr := func() uint16 {
-		return i.addrMode.getAddress(c, p1Func, p2Func)
+		return i.addrMode.getAddress(c, p1Func, p2Func, c.realReadAddress, tick)
 	}
 
 	value := func() uint8 {
-		return i.addrMode.getValue(c, p1Func, p2Func, false)
+		return i.addrMode.getValue(c, p1Func, p2Func, c.realReadAddress, tick)
 	}
 
 	switch a := i.action; a {
@@ -57,7 +63,7 @@ func (c *CPU) ExecuteOnce() {
 		c.writeAddress(addr(), c.X)
 	case JumpSubroutine:
 		addr := addr()
-		upper, lower := decomposeBytes(c.PC)
+		upper, lower := decomposeBytes(c.PC - 1)
 		c.pushStack(lower)
 		c.pushStack(upper)
 		c.PC = addr
@@ -91,7 +97,7 @@ func (c *CPU) ExecuteOnce() {
 	case BranchIfPositive:
 		c.conditionalBranch(!c.N, addr())
 	case ReturnSubroutine:
-		addr := combineBytes(c.popStack(), c.popStack())
+		addr := combineBytes(c.popStack(), c.popStack()) + 1
 		c.PC = addr
 		c.newCycles += 2
 	case SetInteruptDisable:
@@ -148,15 +154,46 @@ func (c *CPU) ExecuteOnce() {
 		c.A = c.setFlagsFromLoad(c.Y)
 	case TransferXToAccumulator:
 		c.A = c.setFlagsFromLoad(c.X)
-	case TransferStackToX:
+	case TransferXToStackPointer:
 		c.X = c.setFlagsFromLoad(c.SP)
+	case TransferStackPointerToX:
+		c.SP = c.X
+	case ReturnFromInterrupt:
+		c.SetStatus(c.popStack())
+		addr := combineBytes(c.popStack(), c.popStack())
+		c.PC = addr
+		c.newCycles++
+	case LogicalShiftRight:
+		v := value()
+		c.A = c.setFlagsFromLoad(v >> 1)
+		c.C = v&0x1 == 1
+	case ArithmeticShitLeft:
+		v := value()
+		c.A = c.setFlagsFromLoad(v << 1)
+		c.C = v>>7 == 1
+	case RotateRight:
+		v := value()
+		cr := uint8(0)
+		if c.C {
+			cr = 0x80
+		}
+		c.A = c.setFlagsFromLoad(v>>1 | cr)
+		c.C = v&0x1 == 1
+	case RotateLeft:
+		v := value()
+		cr := uint8(0)
+		if c.C {
+			cr = 0x1
+		}
+		c.A = c.setFlagsFromLoad(v<<1 | cr)
+		c.C = v>>7 == 1
 	default:
 		panic(fmt.Sprintf("Unknown action %d", a))
 	}
 
 	cycles := c.newCycles * 3
 	c.Cycles = cycles % 341
-	c.ScanLine = 241 + (cycles / 341)
+	c.ScanLine = (242+cycles/341)%262 - 1
 }
 
 func (c *CPU) conditionalBranch(v bool, addr uint16) {
@@ -183,6 +220,9 @@ func (c *CPU) add(v uint8) {
 	c.V = ^(a^v)&(a^uint8(sum))&0x80 != 0
 	c.A = uint8(sum)
 }
+
+func (c *CPU) debugReadAddress(addr uint16) uint8 { return c.readAddress(addr, true) }
+func (c *CPU) realReadAddress(addr uint16) uint8  { return c.readAddress(addr, false) }
 
 func (c *CPU) readAddress(addr uint16, debug bool) uint8 {
 	if !debug {
@@ -220,13 +260,16 @@ func (c *CPU) getInstruction(debug bool) *instruction {
 }
 
 func (c *CPU) pushStack(v uint8) {
-	c.writeAddress(uint16(c.SP), v)
+	// fmt.Printf("push %04X %02X %02X\n", c.PC, c.SP, v)
+	c.writeAddress(0x100|uint16(c.SP), v)
 	c.SP--
 }
 
 func (c *CPU) popStack() uint8 {
 	c.SP++
-	return c.readAddress(uint16(c.SP), false)
+	v := c.readAddress(0x100|uint16(c.SP), false)
+	// fmt.Printf("pop  %04X %02X %02X\n", c.PC, c.SP, v)
+	return v
 }
 
 func (c *CPU) setFlagsFromLoad(v uint8) uint8 {
