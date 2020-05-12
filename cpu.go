@@ -164,31 +164,43 @@ func (c *CPU) ExecuteOnce() {
 		c.PC = addr
 		c.newCycles++
 	case LogicalShiftRight:
-		v := value()
-		c.A = c.setFlagsFromLoad(v >> 1)
-		c.C = v&0x1 == 1
+		i.addrMode.updateValue(c, p1Func, p2Func, c.realReadAddress, tick, func(v uint8) uint8 {
+			c.C = v&0x1 == 1
+			return c.setFlagsFromLoad(v >> 1)
+		})
 	case ArithmeticShitLeft:
-		v := value()
-		c.A = c.setFlagsFromLoad(v << 1)
-		c.C = v>>7 == 1
+		i.addrMode.updateValue(c, p1Func, p2Func, c.realReadAddress, tick, func(v uint8) uint8 {
+			c.C = v>>7 == 1
+			return c.setFlagsFromLoad(v << 1)
+		})
 	case RotateRight:
-		v := value()
-		cr := uint8(0)
-		if c.C {
-			cr = 0x80
-		}
-		c.A = c.setFlagsFromLoad(v>>1 | cr)
-		c.C = v&0x1 == 1
+		i.addrMode.updateValue(c, p1Func, p2Func, c.realReadAddress, tick, func(v uint8) uint8 {
+			cr := uint8(0)
+			if c.C {
+				cr = 0x80
+			}
+			c.C = v&0x1 == 1
+			return c.setFlagsFromLoad(v>>1 | cr)
+		})
 	case RotateLeft:
-		v := value()
-		cr := uint8(0)
-		if c.C {
-			cr = 0x1
-		}
-		c.A = c.setFlagsFromLoad(v<<1 | cr)
-		c.C = v>>7 == 1
+		i.addrMode.updateValue(c, p1Func, p2Func, c.realReadAddress, tick, func(v uint8) uint8 {
+			cr := uint8(0)
+			if c.C {
+				cr = 0x1
+			}
+			c.C = v>>7 == 1
+			return c.setFlagsFromLoad(v<<1 | cr)
+		})
 	case StoreY:
 		c.writeAddress(addr(), c.Y)
+	case IncrementMemory:
+		i.addrMode.updateValue(c, p1Func, p2Func, c.realReadAddress, tick, func(v uint8) uint8 {
+			return c.setFlagsFromLoad(v + 1)
+		})
+	case DecrementMemory:
+		i.addrMode.updateValue(c, p1Func, p2Func, c.realReadAddress, tick, func(v uint8) uint8 {
+			return c.setFlagsFromLoad(v - 1)
+		})
 	default:
 		panic(fmt.Sprintf("Unknown action %d", a))
 	}
